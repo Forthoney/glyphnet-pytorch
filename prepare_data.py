@@ -6,24 +6,26 @@
     to be reproducible; hence we do our own splitting.
 """
 
+import urllib.request
 import hashlib
 import shutil
 import logging
 from collections import Counter
-from os import listdir, makedirs
-from os.path import isdir, isfile, join, dirname
+import os
+from os.path import join, isdir, isfile
+from argparse import ArgumentParser
 
 import numpy as np
 from sklearn.model_selection import train_test_split
 
 UNKNOWN_LABEL = "UNKNOWN"
 
-if __name__ == "__main__":
 
-    from argparse import ArgumentParser
-
+def main():
     ap = ArgumentParser()
-    ap.add_argument("--data_path", default="/".join(("data", "Dataset", "Manual", "Preprocessed")))
+    ap.add_argument(
+        "--data_path", default="/".join(("data", "Dataset", "Manual", "Preprocessed"))
+    )
     ap.add_argument("--prepared_data_path", default="prepared_data")
     ap.add_argument("--test_fraction", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=261)
@@ -34,19 +36,19 @@ if __name__ == "__main__":
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
 
-    file_dir = dirname(__file__)
-    stele_path = join(file_dir, arguments.data_path)
-    steles = [join(stele_path, f) for f in listdir(stele_path) if isdir(join(stele_path, f))]
+    download_dataset()
+
+    file_dir = os.path.dirname(__file__)
+    stele_path = os.path.join(file_dir, arguments.data_path)
+    steles = filter(isdir, map(lambda f: join(stele_path, f), os.listdir(stele_path)))
 
     res_image_paths, labels = [], []
-
     for stele in steles:
-
-        image_paths = [join(stele, f) for f in listdir(stele) if isfile(join(stele, f))]
+        image_paths = filter(isfile, map(lambda f: join(stele, f), os.listdir(stele)))
 
         for path in image_paths:
             res_image_paths.append(path)
-            labels.append(path[(path.rfind("_") + 1): path.rfind(".")])
+            labels.append(path[(path.rfind("_") + 1) : path.rfind(".")])
 
     list_of_paths = np.asarray(res_image_paths)
     labels = np.array(labels)
@@ -68,25 +70,60 @@ if __name__ == "__main__":
     filtered_labels = np.delete(labels, to_be_deleted, 0)
 
     # we split the data
-    train_paths, test_paths, y_train, y_test = train_test_split(filtered_list_of_paths,
-                                                                filtered_labels,
-                                                                stratify=filtered_labels,
-                                                                test_size=arguments.test_fraction,
-                                                                random_state=arguments.seed)
+    train_paths, test_paths, y_train, y_test = train_test_split(
+        filtered_list_of_paths,
+        filtered_labels,
+        stratify=filtered_labels,
+        test_size=arguments.test_fraction,
+        random_state=arguments.seed,
+    )
 
     # we add the 'single-occurence' folks to the train set
-    train_paths = np.concatenate([train_paths, list_of_paths[to_be_added_to_train_only]])
+    train_paths = np.concatenate(
+        [train_paths, list_of_paths[to_be_added_to_train_only]]
+    )
     y_train = np.concatenate([y_train, labels[to_be_added_to_train_only]])
 
+    # Delete directory if already exists
+    if os.path.exists(arguments.prepared_data_path):
+        shutil.rmtree(arguments.prepared_data_path)
+
     # then we copy all
-    makedirs(arguments.prepared_data_path, exist_ok=True)
-    [makedirs(join(arguments.prepared_data_path, "train", + l), exist_ok=True) for l in set(y_train)]
-    [makedirs(join(arguments.prepared_data_path, "test", + l), exist_ok=True) for l in set(y_test)]
+    os.makedirs(arguments.prepared_data_path)
+    for label in set(y_train):
+        os.makedirs(join(arguments.prepared_data_path, "train", label))
+    for label in set(y_test):
+        os.makedirs(join(arguments.prepared_data_path, "test", label))
 
-    for fp, label in zip(train_paths, y_train):
-        fn = join(arguments.prepared_data_path, "train", label, hashlib.md5(fp.encode('utf-8')).hexdigest() + ".png")
-        shutil.copyfile(fp, fn)
+    copy_to_prepared_data_dir(train_paths, y_train, arguments.prepared_data_path)
+    copy_to_prepared_data_dir(test_paths, y_test, arguments.prepared_data_path)
 
-    for fp, label in zip(test_paths, y_test):
-        fn = join(arguments.prepared_data_path, "test", label, hashlib.md5(fp.encode('utf-8')).hexdigest() + ".png")
-        shutil.copyfile(fp, fn)
+
+def generate_file_id(filepath):
+    return hashlib.md5(filepath.encode("utf-8")).hexdigest() + ".png"
+
+
+def copy_to_prepared_data_dir(paths, dataset, prepared_data_path):
+    for filepath, label in zip(paths, dataset):
+        filename = join(
+            prepared_data_path, "test", label, filepath, generate_file_id(filepath)
+        )
+        shutil.copyfile(filepath, filename)
+
+
+def download_dataset():
+    url = "http://iamai.nl/downloads/GlyphDataset.zip"
+    zip_file_path = "GlyphDataset.zip"
+    extracted_dir = "data"
+
+    urllib.request.urlretrieve(url, zip_file_path)
+    logging.debug("Downloaded GlyphDataset.zip")
+
+    shutil.unpack_archive(zip_file_path, extracted_dir)
+    logging.debug("Unzipped GlyphDataset.zip")
+
+    os.remove(zip_file_path)
+
+
+if __name__ == "__main__":
+    main()
